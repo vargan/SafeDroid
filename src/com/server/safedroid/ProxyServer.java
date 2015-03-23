@@ -29,9 +29,12 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
 import java.nio.channels.SocketChannel;
+
 import android.annotation.TargetApi;
 import android.net.VpnService;
 import android.os.Build;
+import android.util.Log;
+
 import com.service.*;
 
 /**
@@ -121,7 +124,7 @@ public class ProxyServer implements Runnable{
 		UDPRelayServer.proxy = proxy;
 	}
 
-	public static void setVpnService (final VpnService v)
+	public void setVpnService (final VpnService v)
 	{
 		vpnService = v;
 	}
@@ -190,21 +193,35 @@ public class ProxyServer implements Runnable{
 	 * This methods blocks.
 	 */
 	public void start(final int port, final int backlog,
-			final InetAddress localIP) {
+			String mAddress) {
 		try {
-			ss = new ServerSocket(port, backlog, localIP);
+			
+			ss = new ServerSocket(port, backlog, InetAddress.getByName(mAddress));
+			@SuppressWarnings("unused")
 			final String address = ss.getInetAddress().getHostAddress();
+			@SuppressWarnings("unused")
 			final int localPort = ss.getLocalPort();
-			//log.info("Starting SOCKS Proxy on: {}:{}", address, localPort);
-
+			
 			while (true) {
-				final Socket s = ss.accept();
+				Socket s = ss.accept();
+				try {
+					Thread.sleep(10);
+				} catch (InterruptedException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+				@SuppressWarnings("unused")
 				final String hostName = s.getInetAddress().getHostName();
+				@SuppressWarnings("unused")
 				final int port2 = s.getPort();
-				
-				//log.info("Accepted from:{}:{}", hostName, port2);
 
 				final ProxyServer ps = new ProxyServer(auth, s);
+				try {
+					Thread.sleep(10);
+				} catch (InterruptedException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
 				(new Thread(ps)).start();
 			}
 		} catch (final IOException ioe) {

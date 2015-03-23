@@ -56,15 +56,16 @@ public class AppRequestService extends VpnService implements Runnable {
 	ParcelFileDescriptor mInterface;
 	Thread mThread;
 	private int mSocksProxyPort = 9999;
-	private String mServerAddress = "127.0.0.1";
 	private int mServerPort = 8087;
-	private boolean keepAlive = true;
+	private String mServerAddress = "127.0.0.1";
+	
 
 	public int onStartCommand(Intent intent, int flags, int startId) {
 		if (mThread != null) {
 			mThread.interrupt();
 		}
 		startSocksBypass();
+
 		try {
 			Thread.sleep(100);
 		} catch (InterruptedException e) {
@@ -72,13 +73,42 @@ public class AppRequestService extends VpnService implements Runnable {
 		}
 		mThread = new Thread(this);
 		mThread.start();
-		
 
 		return START_STICKY;
 
 	}
 
 	public synchronized void run() {
+
+		DatagramChannel tunnel = null;
+		InetSocketAddress server = new InetSocketAddress(mServerAddress,
+				mSocksProxyPort);
+
+		try {
+			tunnel = DatagramChannel.open();
+			
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+		DatagramSocket s = tunnel.socket();
+
+		if (!protect(s)) {
+			throw new IllegalStateException("Cannot protect the tunnel");
+		}
+		try {
+
+			tunnel.connect(server);
+			tunnel.configureBlocking(false);
+
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		boolean connected = tunnel.isConnected();
+
 		mInterface = builder.setSession("trialDroidVPNService")
 				.addAddress("192.168.0.1", 24).addDnsServer("8.8.8.8")
 				.addRoute("0.0.0.0", 0).establish();
@@ -89,22 +119,6 @@ public class AppRequestService extends VpnService implements Runnable {
 				mInterface.getFileDescriptor());
 		// c. The UDP channel can be used to pass/get ip package to/from
 		// server
-		DatagramChannel tunnel = null;
-		try {
-			tunnel = DatagramChannel.open();
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		
-		try {
-			tunnel.connect(new InetSocketAddress(mServerAddress, mServerPort));
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-
-		protect(tunnel.socket());
 
 		ByteBuffer packet = ByteBuffer.allocate(32767);
 
@@ -176,16 +190,10 @@ public class AppRequestService extends VpnService implements Runnable {
 	public void startSocksBypass() {
 		Thread thread = new Thread() {
 			public void run() {
-				try {
-					final ProxyServer server = new ProxyServer(
-							new ServerAuthenticatorNone(null, null));
-					server.setVpnService(AppRequestService.this);
-
-					server.start(mSocksProxyPort, 5, InetAddress.getLocalHost());
-				} catch (UnknownHostException e) { // TODO Auto-generated catch
-													// block
-					e.printStackTrace();
-				}
+				final ProxyServer server = new ProxyServer(
+						new ServerAuthenticatorNone(null, null));
+				server.setVpnService(AppRequestService.this);
+				server.start(mSocksProxyPort, 5, mServerAddress);
 
 			}
 		};
@@ -200,103 +208,5 @@ public class AppRequestService extends VpnService implements Runnable {
 		}
 		super.onDestroy();
 	}
-
-	/*
-	 * private Thread vpnThread; private ParcelFileDescriptor vpnInterface;
-	 * 
-	 * VpnService.Builder builder = new VpnService.Builder(); private static
-	 * String TAG = "AppRequestService"; private Handler mHandler; private
-	 * PendingIntent vpnConfigureIntent; private ParcelFileDescriptor
-	 * mInterface;
-	 * 
-	 * private int mSocksProxyPort = 9999; private String mServerAddress =
-	 * "127.0.0.73"; private int mServerPort = 8087; private boolean keepAlive =
-	 * true;
-	 * 
-	 * @Override public int onStartCommand(Intent intent, int flags, int
-	 * startId) {
-	 * 
-	 * 
-	 * if (vpnThread != null) { vpnThread.interrupt(); }
-	 * 
-	 * vpnThread = new Thread(this);
-	 * 
-	 * vpnThread.start();
-	 * 
-	 * // startSocksBypass();
-	 * 
-	 * return START_STICKY; }
-	 * 
-	 * 
-	 * 
-	 * 
-	 * 
-	 * @Override public synchronized void run() { InetSocketAddress server = new
-	 * InetSocketAddress(mServerAddress, mServerPort); DatagramChannel mTunnel =
-	 * null; boolean isConnected = false; try { mTunnel =
-	 * DatagramChannel.open(); } catch (IOException e) { // TODO Auto-generated
-	 * catch block e.printStackTrace(); } DatagramSocket pSocket =
-	 * mTunnel.socket();
-	 * 
-	 * if (!protect(pSocket)) { throw new
-	 * IllegalStateException("Cannot protect the tunnel"); }
-	 * 
-	 * try { mTunnel.connect(server); mTunnel.configureBlocking(false); } catch
-	 * (IOException e) { // TODO Auto-generated catch block e.printStackTrace();
-	 * }
-	 * 
-	 * vpnInterface = builder.setSession("SafeDroidService")
-	 * .addAddress("192.168.0.1", 24).addDnsServer("8.8.8.8")
-	 * .addRoute("0.0.0.0", 0).establish();
-	 * 
-	 * isConnected = true;
-	 * 
-	 * protect(mTunnel.socket());
-	 * 
-	 * FileInputStream in = new FileInputStream(
-	 * vpnInterface.getFileDescriptor());
-	 * 
-	 * FileOutputStream out = new FileOutputStream(
-	 * vpnInterface.getFileDescriptor());
-	 * 
-	 * ByteBuffer packet = ByteBuffer.allocate(32767);
-	 * 
-	 * int timer = 0; while (true) { try { boolean idle = true; int length =
-	 * in.read(packet.array()); Log.i("SafeDroid", "" + in.available() + " l:" +
-	 * length); if (length > 0) { packet.limit(length); mTunnel.write(packet);
-	 * packet.clear();
-	 * 
-	 * idle = false;
-	 * 
-	 * if (timer < 1) { timer = 1; } }
-	 * 
-	 * length = mTunnel.read(packet); if (length > 0) {
-	 * out.write(packet.array(), 0, length); packet.clear();
-	 * 
-	 * idle = false;
-	 * 
-	 * if (timer > 0) { timer = 0; } }
-	 * 
-	 * if (idle) { Thread.sleep(100);
-	 * 
-	 * // Increase the timer. This is inaccurate but good // enough, // since
-	 * everything is operated in non-blocking // mode. timer += (timer > 0) ?
-	 * 100 : -100;
-	 * 
-	 * // We are receiving for a long time but not sending. if (timer < -15000)
-	 * { // Switch to sending. timer = 1; }
-	 * 
-	 * // We are sending for a long time but not receiving. if (timer > 20000) {
-	 * // throw new IllegalStateException("Timed out"); //
-	 * Log.d(TAG,"receiving timed out? timer=" + // timer); } }
-	 * 
-	 * } catch (Exception e) {
-	 * 
-	 * }
-	 * 
-	 * }
-	 * 
-	 * }
-	 */
 
 }
