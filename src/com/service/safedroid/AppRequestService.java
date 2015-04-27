@@ -695,9 +695,10 @@ public class AppRequestService extends VpnService implements Runnable {
 	}
 
 	public ByteBuffer createUDPpacket(byte[] tempPacket,
-			ByteBuffer responsePayload, long sourcePortVal, long dstPortVal) {
+			ByteBuffer responsePayload, long sourcePortVal, long dstPortVal,
+			int responseLength) {
 
-		int packetLength = responsePayload.limit() + 8;
+		int packetLength = responseLength + 8;
 		// udpPacket = header(8) bytes + payload
 		ByteBuffer udpPacketHeader = ByteBuffer.allocate(8);
 		udpPacketHeader.order(ByteOrder.BIG_ENDIAN);
@@ -723,8 +724,21 @@ public class AppRequestService extends VpnService implements Runnable {
 		ByteBuffer udpPacket = ByteBuffer.allocate(packetLength);
 		udpPacket.order(ByteOrder.BIG_ENDIAN);
 		Log.d("safeDroidUDP", "UDP packet created");
+		Log.d("safeDroidUDP", "Buffer size: " + packetLength);
+
 		udpPacket.put(udpHeader);
-		udpPacket.put(responsePayload.array());
+		Log.d("safeDroidUDP", "Buffer Remaining size: " + udpPacket.remaining());
+
+		byte[] responsePayloadBuffer = responsePayload.array();
+
+		if (responsePayload.limit() > 0) {
+			for (int y = 0; y < responseLength; y++) {
+				udpPacket.put(responsePayloadBuffer[y]);
+			}
+		}
+		Log.d("safeDroidUDP", "Payload written");
+		udpPacket.limit(packetLength);
+		
 
 		return udpPacket;
 	}
@@ -849,25 +863,26 @@ public class AppRequestService extends VpnService implements Runnable {
 			if (responseLength > 0) {
 				Log.d("safeDroidUDP", "GOT UDP RESPONSE!!!!");
 				Log.d("safeDroidUDP", Arrays.toString(responsePayload.array()));
-			}
 
-			responsePayload.limit(responseLength);
+				responsePayload.limit(responseLength);
 
-			ByteBuffer udpPacket = createUDPpacket(tempPacket, responsePayload,
-					sourcePortVal, dstPortVal);
+				ByteBuffer udpPacket = createUDPpacket(tempPacket,
+						responsePayload, sourcePortVal, dstPortVal,
+						responseLength);
 
-			int version = tempPacket[0] >> 4;
-			if (version == 4) {
-				// IPv4 packet
+				int version = tempPacket[0] >> 4;
+				if (version == 4) {
+					// IPv4 packet
 
-				ByteBuffer ipPacket = createIPv4Packet(udpPacket.array(),
-						tempPacket);
-				out.write(ipPacket.array());
-				Log.d("safeDroidUDP", "Packet Written");
+					ByteBuffer ipPacket = createIPv4Packet(udpPacket.array(),
+							tempPacket);
+					out.write(ipPacket.array());
+					Log.d("safeDroidUDP", "Packet Written to TUN interface");
 
-			} else if (version == 6) {
-				// IPv6 packet
+				} else if (version == 6) {
+					// IPv6 packet
 
+				}
 			}
 
 		} catch (IOException e) {
