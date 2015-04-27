@@ -36,7 +36,7 @@ import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.concurrent.ConcurrentHashMap;
-
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -86,7 +86,7 @@ public class AppRequestService extends VpnService implements Runnable {
 		return checksum;
 	}
 
-	public ByteBuffer createIPv4Pakcet(byte[] packet, byte[] tempPacket) {
+	public ByteBuffer createIPv4Packet(byte[] packet, byte[] tempPacket) {
 
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		DataOutputStream dout = new DataOutputStream(out);
@@ -101,7 +101,7 @@ public class AppRequestService extends VpnService implements Runnable {
 
 		try {
 
-			dout.writeByte((byte) (versionIHL & 0xFF));
+			dout.writeByte((byte) (tempPacket[0] & 0xFF));
 
 			dout.writeByte((byte) (tempPacket[1] & 0xFF));
 
@@ -169,10 +169,11 @@ public class AppRequestService extends VpnService implements Runnable {
 		ipPacket[10] = checksumBuf[0];
 		ipPacket[11] = checksumBuf[1];
 
-		ByteBuffer ipPacketBuffer = ByteBuffer.allocate(packet.length + 20)
-				.put(ipPacket);
+		ByteBuffer ipPacketBuffer = ByteBuffer.allocate(packet.length + 20);
 
 		ipPacketBuffer.order(ByteOrder.BIG_ENDIAN);
+
+		ipPacketBuffer.put(ipPacket);
 
 		Log.d("safeDroidResponse", Arrays.toString(tempPacket));
 		Log.d("safeDroidResponse", Arrays.toString(ipPacketBuffer.array()));
@@ -565,7 +566,7 @@ public class AppRequestService extends VpnService implements Runnable {
 				long version = (versionIHL >> 4) & 0xFF;
 				ByteBuffer ipPacket = null;
 				if (version == 4) {
-					ipPacket = createIPv4Pakcet(tcpSYNACKpacket, tempPacket);
+					ipPacket = createIPv4Packet(tcpSYNACKpacket, tempPacket);
 
 				} else if (version == 6) {
 					ipPacket = createIPv6Packet(tcpSYNACKpacket, tempPacket);
@@ -632,6 +633,102 @@ public class AppRequestService extends VpnService implements Runnable {
 
 	}
 
+	public ByteBuffer udpChecksum(byte[] udpHeader, byte[] tempPacket,
+			int udpPacketLength) {
+		ByteBuffer pseudoHeader = ByteBuffer.allocate(20);
+
+		// write the address of the remote host as the destination address
+		pseudoHeader.put((byte) (tempPacket[15] & 0xFF));
+		pseudoHeader.put((byte) (tempPacket[17] & 0xFF));
+		pseudoHeader.put((byte) (tempPacket[18] & 0xFF));
+		pseudoHeader.put((byte) (tempPacket[19] & 0xFF));
+
+		// write the local address as destination
+		pseudoHeader.put((byte) (tempPacket[12] & 0xFF));
+		pseudoHeader.put((byte) (tempPacket[13] & 0xFF));
+		pseudoHeader.put((byte) (tempPacket[14] & 0xFF));
+		pseudoHeader.put((byte) (tempPacket[15] & 0xFF));
+
+		// put zeroes
+		pseudoHeader.put((byte) (0));
+
+		// protocol UDP -- 17
+		pseudoHeader.put((byte) (17));
+
+		// put udp packet length
+		pseudoHeader.putShort((short) (udpPacketLength));
+
+		// write udp header
+		pseudoHeader.put(udpHeader);
+
+		ByteBuffer checksum = ByteBuffer.allocate(2);
+		int ctr = 0;
+		long sum = 0;
+		int headerLength = 20;
+		long data = 0;
+
+		byte[] udpPacket = pseudoHeader.array();
+		while (ctr < headerLength) {
+			// sum consecutive 16 bits
+			long term1 = (udpPacket[ctr] << 8) & 0xFF00;
+			long term2 = (udpPacket[ctr + 1] & 0x00FF);
+
+			data = term1 | term2;
+			sum += data;
+
+			if ((sum & 0xFFFF0000) > 0) {
+				sum = sum & 0xFFFF;
+				sum += 1;
+			}
+
+			ctr += 2;
+		}
+
+		sum = ~sum;
+		sum = sum & 0xFFFF;
+
+		checksum.putShort((short) sum);
+		Log.d("safeDroidUDP", "UDP checksum complete!");
+
+		return checksum;
+
+	}
+
+	public ByteBuffer createUDPpacket(byte[] tempPacket,
+			ByteBuffer responsePayload, long sourcePortVal, long dstPortVal) {
+
+		int packetLength = responsePayload.limit() + 8;
+		// udpPacket = header(8) bytes + payload
+		ByteBuffer udpPacketHeader = ByteBuffer.allocate(8);
+		udpPacketHeader.order(ByteOrder.BIG_ENDIAN);
+
+		// flipped ports
+		udpPacketHeader.putShort((short) dstPortVal);
+		udpPacketHeader.putShort((short) sourcePortVal);
+
+		// write length
+
+		udpPacketHeader.putShort((short) packetLength);
+
+		// default checksum value
+		udpPacketHeader.putShort((short) 0);
+		byte[] udpHeader = udpPacketHeader.array();
+
+		ByteBuffer checksum = udpChecksum(udpHeader, tempPacket, packetLength);
+		byte[] checksumBuffer = checksum.array();
+
+		udpHeader[6] = checksumBuffer[0];
+		udpHeader[7] = checksumBuffer[1];
+
+		ByteBuffer udpPacket = ByteBuffer.allocate(packetLength);
+		udpPacket.order(ByteOrder.BIG_ENDIAN);
+		Log.d("safeDroidUDP", "UDP packet created");
+		udpPacket.put(udpHeader);
+		udpPacket.put(responsePayload.array());
+
+		return udpPacket;
+	}
+
 	public void connectUDP(String socketKey,
 			ConcurrentHashMap<String, DatagramChannel> socketMapUDP,
 			String sourceAddress, long sourcePortVal, String dstAddress,
@@ -664,15 +761,9 @@ public class AppRequestService extends VpnService implements Runnable {
 				if (udpChannel.isConnected()) {
 					Log.d("safeDroidUDP", "Connection Successful");
 				}
-
-			} catch (UnknownHostException e) {
-				Log.d("safeDroidUDP", "failed to connect");
-				e.printStackTrace();
-				return;
 			} catch (IOException e) {
-
+				// TODO Auto-generated catch block
 				e.printStackTrace();
-				return;
 			}
 
 			socketMapUDP.put(socketKey, udpChannel);
@@ -696,6 +787,7 @@ public class AppRequestService extends VpnService implements Runnable {
 				} else {
 					Log.d("safeDroidUDP", "Failed to protect socket");
 				}
+
 				try {
 					udpChannel.connect(new InetSocketAddress(dstAddress,
 							(int) dstPortVal));
@@ -704,7 +796,7 @@ public class AppRequestService extends VpnService implements Runnable {
 					}
 
 				} catch (IOException e) {
-					Log.d("safeDroidUDP", "Failed to connect");
+					// TODO Auto-generated catch block
 					e.printStackTrace();
 				}
 
@@ -724,7 +816,8 @@ public class AppRequestService extends VpnService implements Runnable {
 		int payloadCtr = 0;
 		int length = 0;
 
-		Log.d("safeDroidUDP", Long.toString(payloadLength));
+		Log.d("safeDroidUDP", Arrays.toString(tempPacket));
+		Log.d("safeDroidUDP", "Payload Length: " + payloadLength);
 
 		while (payloadCtr < payloadLength) {
 			payload.put((byte) (tempPacket[basePayloadIndex + payloadCtr] & 0xFF));
@@ -737,12 +830,18 @@ public class AppRequestService extends VpnService implements Runnable {
 		Log.d("safeDroidUDP", Arrays.toString(payload.array()));
 
 		try {
-			int writeVal = udpChannel.send(payload, dest);
+			udpChannel.socket().setSendBufferSize(32767);
+			udpChannel.socket().setReceiveBufferSize(32767);
+
+			payload.position(0);
+			int writeVal = udpChannel.write(payload);
+
 			Log.d("safeDroidUDP", "Bytes written on channel: " + writeVal);
 			if (writeVal > 0) {
 				payload.clear();
 			}
-			
+			responsePayload.clear();
+			responsePayload.order(ByteOrder.BIG_ENDIAN);
 			int responseLength = udpChannel.read(responsePayload);
 
 			Log.d("safeDroidUDP", "Bytes read from channel: " + responseLength);
@@ -750,7 +849,25 @@ public class AppRequestService extends VpnService implements Runnable {
 			if (responseLength > 0) {
 				Log.d("safeDroidUDP", "GOT UDP RESPONSE!!!!");
 				Log.d("safeDroidUDP", Arrays.toString(responsePayload.array()));
-				responsePayload.clear();
+			}
+
+			responsePayload.limit(responseLength);
+
+			ByteBuffer udpPacket = createUDPpacket(tempPacket, responsePayload,
+					sourcePortVal, dstPortVal);
+
+			int version = tempPacket[0] >> 4;
+			if (version == 4) {
+				// IPv4 packet
+
+				ByteBuffer ipPacket = createIPv4Packet(udpPacket.array(),
+						tempPacket);
+				out.write(ipPacket.array());
+				Log.d("safeDroidUDP", "Packet Written");
+
+			} else if (version == 6) {
+				// IPv6 packet
+
 			}
 
 		} catch (IOException e) {
