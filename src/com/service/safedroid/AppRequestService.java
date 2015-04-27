@@ -193,17 +193,6 @@ public class AppRequestService extends VpnService implements Runnable {
 
 	}
 
-	public void createUdpPacket(ByteBuffer payload, long sourcePortVal,
-			long dstPortVal) {
-		/*
-		 * UdpPacket.put(ByteBuffer.allocate(2).putLong(sourcePortVal).array());
-		 * UdpPacket.put(ByteBuffer.allocate(2).putLong(dstPortVal).array());
-		 * UdpPacket.put(ByteBuffer.allocate(2).putLong(payload.capacity())
-		 * .array());
-		 */
-		// checkSum
-		// UdpPacket.put(ByteBuffer.allocate(16).putLong().array());
-	}
 
 	@SuppressWarnings("static-access")
 	public ByteBuffer tcpCheckSum(byte[] tempPacket, byte[] tcpPacket,
