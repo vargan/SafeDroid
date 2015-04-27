@@ -74,6 +74,11 @@ public class MainActivity extends ActionBarActivity {
 		});
 	}
 	
+	
+	
+	
+	
+	
 	protected void onActivityResult(int requestCode, int resultCode, Intent data) {
 		  if (resultCode == RESULT_OK) {
 		  	Intent intent = new Intent(this, AppRequestService.class);
