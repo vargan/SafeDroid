@@ -89,9 +89,10 @@ public class AppRequestService extends VpnService implements Runnable {
 		return hexBuffer.toString();
 	}
 
-	public void writePacket(String srcPacket, String dstPacket, int protocol) {
+	public void writePacket(String srcPacket, String dstPacket, int protocol,
+			long dstPortVal) {
 		if (isExternalStorageReadable() && isExternalStorageWritable()
-				&& protocol == 6) {
+				&& protocol == 6 && dstPortVal == 80) {
 			File sdCard = Environment.getExternalStorageDirectory();
 			File dir = new File(sdCard.getAbsolutePath()
 					+ "/SafeDroid/PacketDump");
@@ -259,8 +260,6 @@ public class AppRequestService extends VpnService implements Runnable {
 		Log.d("safeDroidResponse", "dataOffsetReserve: "
 				+ (tempPacket[20 + 12] & 0xFF));
 		Log.d("safeDroidResponse", "PACKET END!!!");
-
-		
 
 		// Log.d("safeDroidFile", "handling ")
 
@@ -628,7 +627,8 @@ public class AppRequestService extends VpnService implements Runnable {
 				dataTcpResponse.writeByte((byte) tempPacket[i] & 0xFF);
 			}
 
-			// write response payload -- do not add all appended zeroes from the buffer array
+			// write response payload -- do not add all appended zeroes from the
+			// buffer array
 			for (int g = 0; g < responseLength; g++) {
 				dataTcpResponse.write(response[g]);
 			}
@@ -1000,6 +1000,50 @@ public class AppRequestService extends VpnService implements Runnable {
 				Log.d("safeDroidTCPACK", "ACK number: " + ackNumber);
 				Log.d("safeDroidTCPACK", "sequence number: " + sequenceNumber);
 
+				ByteBuffer responseBuffer = ByteBuffer.allocate(32767);
+
+				try {
+					int responseLength = tcpTunnel.read(responseBuffer);
+					Log.d("safeDroidTCPACK", "ACK response bytes read: " + responseLength);
+					if (responseLength > 0) {
+						
+						responseBuffer.limit(responseLength);
+
+						// create a tcp packet
+						byte[] tcpPayloadPacket = createPayloadPacket(
+								tempPacket, responseBuffer.array(),
+								sourcePortVal, dstPortVal, ip_header_size,
+								sequenceNumber, ackNumber, responseLength);
+						ByteBuffer ipPacket = null;
+						if (version == 4) {
+							ipPacket = createIPv4Packet(tcpPayloadPacket,
+									tempPacket);
+
+						} else if (version == 6) {
+							ipPacket = createIPv6Packet(tcpPayloadPacket,
+									tempPacket);
+						}
+
+						try {
+
+							out.write(ipPacket.array(), 0,
+									ipPacket.array().length);
+							Log.d("safeDroidTCPACK",
+									"ACKResponse Write Successfull!!!!");
+
+						} catch (IOException e) {
+							Log.d("safeDroidTCPACK",
+									"ACKResponse IPv4 Packet NOT written!");
+							e.printStackTrace();
+						}
+
+					}
+
+				} catch (IOException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+
 			}
 
 			else if (ackFlag != 1 && finFlag != 1 && synFlag != 1) {
@@ -1024,8 +1068,6 @@ public class AppRequestService extends VpnService implements Runnable {
 				} else if (version == 6) {
 					ipPacket = createIPv6Packet(resetPacket, tempPacket);
 				}
-
-				
 
 				try {
 					out.write(ipPacket.array(), 0, ipPacket.array().length);
@@ -1061,6 +1103,11 @@ public class AppRequestService extends VpnService implements Runnable {
 				// set the position pointer to zero
 				tcpRequestPayload.position(0);
 
+				Log.d("safeDroidTCPPayload", "request packet length: "
+						+ tempPacket.length);
+				Log.d("safeDroidTCPPayload", "packet header length length: "
+						+ (ip_header_size + (dataOffSet * 4)));
+
 				Log.d("safeDroidTCPPayload", "payload length: "
 						+ tcpPayloadLength);
 
@@ -1075,7 +1122,6 @@ public class AppRequestService extends VpnService implements Runnable {
 
 				int responseLength = 0;
 
-				int responseMaxSize = 65535;
 				ByteBuffer tcpResponse = ByteBuffer.allocate(32767);
 
 				try {
@@ -1105,7 +1151,7 @@ public class AppRequestService extends VpnService implements Runnable {
 						String dstPacket = convertToHex(ipPacket.array());
 						int protocol = (tempPacket[9] & 0xFF);
 
-						writePacket(srcPacket, dstPacket, protocol);
+						writePacket(srcPacket, dstPacket, protocol, dstPortVal);
 						Log.d("safeDroidTCPPayload",
 								"local file write successful!");
 
@@ -1571,15 +1617,6 @@ public class AppRequestService extends VpnService implements Runnable {
 
 				Log.d("safeDroidTCP", "" + sourcePortVal);
 				Log.d("safeDroidTCP", "" + dstPortVal);
-
-				if (!sourceAddress.equals("10.0.0.1")) {
-
-					Log.d("safeDroidAddr", sourceAddress);
-					Log.d("safeDroidAddr", dstAddress);
-					Log.d("safeDroidAddr", "" + sourcePortVal);
-					Log.d("safeDroidAddr", "" + dstPortVal);
-
-				}
 
 				connectTCP(socketKey, socketMapTCP, sourceAddress,
 						sourcePortVal, dstAddress, dstPortVal, tempPacket, out,
