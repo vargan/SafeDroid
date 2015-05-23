@@ -95,7 +95,7 @@ public class AppRequestService extends VpnService implements Runnable {
 			File dir = new File(sdCard.getAbsolutePath()
 					+ "/SafeDroid/PacketDump");
 
-			File file = new File(dir, "safeDroidSessionDump49.txt");
+			File file = new File(dir, "safeDroidSessionDump52.txt");
 
 			FileWriter fw;
 
@@ -552,24 +552,45 @@ public class AppRequestService extends VpnService implements Runnable {
 
 		int dataOffset = 0;
 		try {
+
+			dataOffset = (tempPacket[ip_header_size + 12] & 0xFF);
+			dataOffset = dataOffset >> 4;
+
+			int ipSegmentLength = (tempPacket[2] & 0xFF);
+			ipSegmentLength = ipSegmentLength << 8;
+			ipSegmentLength += (tempPacket[3] & 0xFF);
+
 			// flip port values
 			dataTcpResponse.writeShort((short) (dstPortVal & 0xFFFF));
 			dataTcpResponse.writeShort((short) (sourcePortVal & 0xFFFF));
 
+			int requestPayloadLength = ipSegmentLength
+					- ((dataOffset * 4) + ip_header_size);
 			// fix the sequence and ack numbers
 			int responseSequenceNumber = (int) (ackNumber);
 
-			int responseAckNumber = (int) (sequenceNumber + requestLength);
+			long responseAckNumber = (sequenceNumber  + requestPayloadLength);
+			
+			Log.d("seqAck", "Socket Key: " + socketKey);
+			Log.d("seqAck", "Request Seq: " + sequenceNumber);
+			Log.d("seqAck", "Request Ack: " + ackNumber);
+			
+			Log.d("seqAck", "Request IP Length: " + ipSegmentLength);
+			Log.d("seqAck", "Request IP Header: " + ip_header_size);
+			Log.d("seqAck", "Request TCP Header: " + (dataOffset*4));
+			Log.d("seqAck", "Request Payload Length: "+ requestPayloadLength);
+			
+			Log.d("seqAck", "Response Seq: " + responseSequenceNumber);
+			Log.d("seqAck", "Response Ack: " + responseAckNumber);
+			
 
 			dataTcpResponse.writeInt((int) responseSequenceNumber);
 
 			dataTcpResponse.writeInt((int) responseAckNumber);
+			
 
 			// dataoffset
 			dataTcpResponse.writeByte(tempPacket[ip_header_size + 12] & 0xFF);
-
-			dataOffset = (tempPacket[ip_header_size + 12] & 0xFF);
-			dataOffset = dataOffset >> 4;
 
 			// control flags -- ACK flag = 1
 
@@ -1153,8 +1174,7 @@ public class AppRequestService extends VpnService implements Runnable {
 					Log.d("safeDroidTCPPayload", "Length used: "
 							+ tempPacket.length);
 
-					int tcpPayloadLength = (int) (tempPacket.length
-							- ((dataOffSet * 4) + ip_header_size));
+					int tcpPayloadLength = (int) (ipSegmentLength - ((dataOffSet * 4) + ip_header_size));
 
 					ByteBuffer tcpRequestPayload = ByteBuffer
 							.allocate(tcpPayloadLength);
@@ -1163,39 +1183,11 @@ public class AppRequestService extends VpnService implements Runnable {
 
 					int tcpPayloadBaseIndex = (int) (ip_header_size + (dataOffSet * 4));
 
-					Log.d("safeDroidTCPPayload",
-							"request packet ip header size: " + ip_header_size);
-
-					Log.d("safeDroidTCPPayload", "request packet dataOffset: "
-							+ dataOffSet);
-					Log.d("safeDroidTCPPayload",
-							"request packet payloadBaseIndex: "
-									+ tcpPayloadBaseIndex);
-
-					Log.d("safeDroidTCPPayload",
-							"packet header length length: "
-									+ (ip_header_size + (dataOffSet * 4)));
-
-					
 					for (int j = tcpPayloadBaseIndex; j < tempPacket.length; j++) {
 						tcpRequestPayload.put((byte) (tempPacket[j] & 0xFF));
-						
 					}
 
-					Log.d("safeDroidTCPPayload", "payload length computed: "
-							+ tcpPayloadLength);
-
-					Log.d("safeDroidTCPPayload", "payload length used: "
-							+ tcpRequestPayload.array().length);
-
-					// set the position pointer to zero
 					tcpRequestPayload.position(0);
-
-					Log.d("safeDroidTCPPayload", "request packet length: "
-							+ tempPacket.length);
-
-					ByteBuffer dummyRequest = ByteBuffer
-							.allocate(tempPacket.length);
 
 					if (tcpTunnel.isConnected()) {
 
@@ -1203,17 +1195,14 @@ public class AppRequestService extends VpnService implements Runnable {
 						String writeCheckElements[] = writeCheck.split("\n");
 						responseStatus = Integer
 								.parseInt(writeCheckElements[2]);
-						
-						int writeVal = 0;
-						
+
 						try {
 							tcpRequestPayload.order(ByteOrder.BIG_ENDIAN);
 							if (responseStatus == 2) {
 								String srcPacket = convertToHex(tempPacket);
 								writeDump(srcPacket);
 
-								writeVal = tcpTunnel
-										.write(tcpRequestPayload);
+								tcpTunnel.write(tcpRequestPayload);
 
 								String sequenceAckUpdate = sequenceNumber
 										+ "\n" + ackNumber + "\n" + "0";
@@ -1273,13 +1262,11 @@ public class AppRequestService extends VpnService implements Runnable {
 								} else if (version == 6) {
 
 								}
-								dummyRequest.order(ByteOrder.BIG_ENDIAN);
 
 								ipPacket.order(ByteOrder.BIG_ENDIAN);
 
 								String dstPacket = convertToHex(ipPacket
 										.array());
-								int protocol = (tempPacket[9] & 0xFF);
 
 								writeDump(dstPacket);
 
