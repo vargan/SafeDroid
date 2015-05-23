@@ -95,7 +95,7 @@ public class AppRequestService extends VpnService implements Runnable {
 			File dir = new File(sdCard.getAbsolutePath()
 					+ "/SafeDroid/PacketDump");
 
-			File file = new File(dir, "safeDroidSessionDump12.txt");
+			File file = new File(dir, "safeDroidSessionDump49.txt");
 
 			FileWriter fw;
 
@@ -537,9 +537,10 @@ public class AppRequestService extends VpnService implements Runnable {
 		return tcpPacket;
 	}
 
-	public byte[] createPayloadPacket(byte[] tempPacket, byte[] response,
-			long sourcePortVal, long dstPortVal, int ip_header_size,
-			long sequenceNumber, long ackNumber, int responseLength,
+	public byte[] createPayloadPacket(int requestLength, byte[] tempPacket,
+			byte[] response, long sourcePortVal, long dstPortVal,
+			int ip_header_size, long sequenceNumber, long ackNumber,
+			int responseLength,
 			ConcurrentHashMap<String, String> tcpConnectionState,
 			String socketKey) {
 
@@ -557,15 +558,8 @@ public class AppRequestService extends VpnService implements Runnable {
 
 			// fix the sequence and ack numbers
 			int responseSequenceNumber = (int) (ackNumber);
-			int responseAckNumber = (int) (sequenceNumber + responseLength);
 
-			// add this to tcpConnectionState
-
-			String oldStateVal = tcpConnectionState.get(socketKey);
-			String newStateVal = Integer.toString(responseSequenceNumber)
-					+ "\n" + Integer.toString(responseAckNumber);
-
-			tcpConnectionState.replace(socketKey, oldStateVal, newStateVal);
+			int responseAckNumber = (int) (sequenceNumber + requestLength);
 
 			dataTcpResponse.writeInt((int) responseSequenceNumber);
 
@@ -668,6 +662,11 @@ public class AppRequestService extends VpnService implements Runnable {
 			tcpTunnel.connect(new InetSocketAddress(dstAddress,
 					(int) dstPortVal));
 			tcpTunnel.configureBlocking(false);
+
+			while (!tcpTunnel.finishConnect()) {
+				// busy loop
+			}
+
 			if (tcpTunnel.isConnected()) {
 				Log.d("safeDroidTCP", "TCP connection sucessfull!");
 			} else {
@@ -702,12 +701,23 @@ public class AppRequestService extends VpnService implements Runnable {
 			int ip_header_size, long ip_packet_size,
 			ConcurrentHashMap<String, String> tcpConnectionState)
 			throws IOException {
-		SocketChannel tcpTunnel = null;
 
+		int synFinAck = tempPacket[ip_header_size + 13] & 0x13;
+
+		int synFlag = synFinAck >> 1;
+
+		int finFlag = synFinAck & 0x01;
+
+		int ackFlag = (synFinAck & 0x10) >> 4;
+
+		boolean dropPacket = false;
+
+		SocketChannel tcpTunnel = null;
 		long prevSequenceNumber = 0;
 		long prevAckNumber = 0;
-
+		long responseStatus = 0;
 		long sequenceNumber = 0;
+		long ackNumber = 0;
 
 		sequenceNumber += BigInteger.valueOf(
 				tempPacket[ip_header_size + 4] & 0xFF).longValue();
@@ -721,8 +731,6 @@ public class AppRequestService extends VpnService implements Runnable {
 		sequenceNumber += BigInteger.valueOf(
 				tempPacket[ip_header_size + 7] & 0xFF).longValue();
 
-		long ackNumber = 0;
-
 		ackNumber += BigInteger.valueOf(tempPacket[ip_header_size + 8] & 0xFF)
 				.longValue();
 		ackNumber = ackNumber << 8;
@@ -735,116 +743,117 @@ public class AppRequestService extends VpnService implements Runnable {
 		ackNumber += BigInteger.valueOf(tempPacket[ip_header_size + 11] & 0xFF)
 				.longValue();
 
-		boolean outOfOrderFlag = false;
+		long dataOffSet = (tempPacket[ip_header_size + 12] & 0xff);
+		dataOffSet = dataOffSet >> 4;
 
-		if (socketMapTCP.containsKey(socketKey)) {
-			tcpTunnel = socketMapTCP.get(socketKey);
-			if (!tcpTunnel.isConnected()) {
+		long payloadLength = ip_packet_size
+				- (ip_header_size + (dataOffSet * 4));
 
-				tcpTunnel = getNewTCPChannel(dstAddress, dstPortVal);
+		Log.d("safeDroidTCP", "payload length: " + payloadLength);
 
-				socketMapTCP.put(socketKey, tcpTunnel);
-			}
+		// Book Keeping mechanism
 
-			// TODO: compare sequence and ack numbers
-			if (tcpConnectionState.contains(socketKey)) {
+		if (tcpConnectionState.containsKey(socketKey)) {
+			String sequenceACK = tcpConnectionState.get(socketKey);
 
-				Log.d("safeDroidBug", "no bug in this case");
+			String[] sequenceAckElements = sequenceACK.split("\n");
 
-			} else {
-				String sequenceAck = Long.toString(sequenceNumber) + "\n"
-						+ Long.toString(ackNumber);
+			prevSequenceNumber = Long.parseLong(sequenceAckElements[0]);
+			prevAckNumber = Long.parseLong(sequenceAckElements[1]);
+			responseStatus = Long.parseLong(sequenceAckElements[2]);
 
-				tcpConnectionState.put(socketKey, sequenceAck);
+			Log.d("safeDroidOrder", "oldSeq: " + prevSequenceNumber);
+			Log.d("safeDroidOrder", "newSeq: " + sequenceNumber);
+			Log.d("safeDroidOrder", "oldAck: " + prevAckNumber);
+			Log.d("safeDroidOrder", "newAck: " + ackNumber);
 
-			}
-
-			String sequenceAck = tcpConnectionState.get(socketKey);
-
-			if (sequenceAck.length() > 2) {
-				Log.d("safeDroidSequence", sequenceAck);
-				String[] sequenceAckElements = sequenceAck.split("\n");
-				Log.d("safeDroidSequence", "total elements: "
-						+ sequenceAckElements.length);
-				Log.d("safeDroidSequence", "element1: "
-						+ sequenceAckElements[0]);
-				Log.d("safeDroidSequence", "element2:" + sequenceAckElements[1]);
-
-				prevSequenceNumber = Long.parseLong(sequenceAckElements[0]);
-				prevAckNumber = Long.parseLong(sequenceAckElements[1]);
-
-				// TODO: check out-of-order condition
-
-				/*
-				 * if (prevSequenceNumber == sequenceNumber && prevAckNumber ==
-				 * ackNumber) { // duplicate duplicateFlag = true;
-				 * Log.d("safeDroidTCP", "duplicate"); }
-				 */
-
-				if ((prevAckNumber >= sequenceNumber)
-						&& prevSequenceNumber == ackNumber) {
-					outOfOrderFlag = true;
-					Log.d("safeDroidTCP", "out of order");
+			if ((prevSequenceNumber == sequenceNumber)) {
+				if (responseStatus == 1) {
+					Log.d("safeDroidOrder", "Drop!!");
+					dropPacket = true;
+					if (synFlag == 1) {
+						Log.d("safeDroidDrop", "SYN");
+					}
+					if (payloadLength > 0) {
+						Log.d("safeDroidDrop", "Payload Packet");
+					}
 				}
 
 			}
 
-		} else {
-			tcpTunnel = getNewTCPChannel(dstAddress, dstPortVal);
-			socketMapTCP.put(socketKey, tcpTunnel);
+			else if (sequenceNumber > prevSequenceNumber) {
 
-			String sequenceAck = Long.toString(sequenceNumber) + "\n"
-					+ Long.toString(ackNumber);
-			tcpConnectionState.put(socketKey, sequenceAck);
-			Log.d("safeDroidTCP", "New connection");
+				if (payloadLength > 0) {
+					sequenceACK = sequenceNumber + "\n" + ackNumber + "\n"
+							+ "0";
+					tcpConnectionState.put(socketKey, sequenceACK);
+
+				} else {
+					sequenceACK = sequenceNumber + "\n" + ackNumber + "\n"
+							+ "2";
+
+					tcpConnectionState.put(socketKey, sequenceACK);
+				}
+
+			} else if (sequenceNumber < prevSequenceNumber) {
+				Log.d("safeDroidDrop", "Out of order packet");
+				if (finFlag != 1) {
+					dropPacket = true;
+				}
+
+			} else {
+				dropPacket = true;
+				Log.d("safeDroidDrop", "Miscellaneous");
+			}
 
 		}
 
-		// Avoid either duplicate or out of order packets
-		if (outOfOrderFlag != true) {
+		else {
+			String sequenceACK = "";
+			if (payloadLength > 0) {
+				sequenceACK = sequenceNumber + "\n" + ackNumber + "\n" + "0";
+				tcpConnectionState.put(socketKey, sequenceACK);
 
-			long dataOffSet = (tempPacket[ip_header_size + 12] & 0xff);
-			dataOffSet = dataOffSet >> 4;
+			} else {
+				sequenceACK = sequenceNumber + "\n" + ackNumber + "\n" + "2";
+				tcpConnectionState.put(socketKey, sequenceACK);
 
-			Log.d("safeDroidTCP", "packet tcp offset: " + dataOffSet);
+			}
 
-			// Add IP header + TCP header to establish the base index for TCP
-			// payload
-			long payloadLength = ip_packet_size
-					- (ip_header_size + (dataOffSet * 4));
+		}
 
-			Log.d("safeDroidTCP", "payload length: " + payloadLength);
+		if (dropPacket == false) {
+			// Get a new Channel
+			if (socketMapTCP.containsKey(socketKey)) {
+				tcpTunnel = socketMapTCP.get(socketKey);
+				if (!tcpTunnel.isConnected()) {
+					tcpTunnel = getNewTCPChannel(dstAddress, dstPortVal);
+					socketMapTCP.put(socketKey, tcpTunnel);
+				}
 
-			// figure out sequence and ack number
+			} else {
+				tcpTunnel = getNewTCPChannel(dstAddress, dstPortVal);
+				socketMapTCP.put(socketKey, tcpTunnel);
+			}
 
 			/*
 			 * Figure out if it's SYN/FIN/ACK or packet with payload which needs
 			 * to be reset
 			 */
+
 			long versionIHL = tempPacket[0];
 			long version = (versionIHL >> 4) & 0xFF;
 
 			if (payloadLength == 0) {
-
-				int synFinAck = tempPacket[ip_header_size + 13] & 0x13;
-
-				int flagsVal = tempPacket[ip_header_size + 13] & 0xFFFFFFFF;
-
-				int synFlag = synFinAck >> 1;
-
-				int finFlag = synFinAck & 0x01;
-
-				int ackFlag = (synFinAck & 0x10) >> 4;
-
-				Log.d("safeDroidTCP", "SYNFIN Val: " + synFinAck);
-				Log.d("safeDroidTCP", "Flag Val: " + flagsVal);
-				Log.d("safeDroidTCP", "SYN Flag Val: " + synFlag);
-				Log.d("safeDroidTCP", "FIN Flag Val: " + finFlag);
-				Log.d("safeDroidTCP", "ACK Flag Val: " + ackFlag);
-				Log.d("safeDroidTCP", "SequenceNumber: " + sequenceNumber);
-				Log.d("safeDroidTCP", "ackNumber: " + ackNumber);
+				String srcPacket = convertToHex(tempPacket);
+				writeDump(srcPacket);
 
 				if (synFlag == 1 && ackFlag != 1) {
+
+					String sequenceAckUpdate = sequenceNumber + "\n"
+							+ ackNumber + "\n" + "1";
+
+					tcpConnectionState.put(socketKey, sequenceAckUpdate);
 
 					long responseSequenceNumber = 0;
 					long responseAckNumber = sequenceNumber + 1;
@@ -921,11 +930,6 @@ public class AppRequestService extends VpnService implements Runnable {
 
 						dataTcpSYNACK.writeShort((short) (urgPtr));
 
-						// add remainder of the packet -- with or without
-						// options
-
-						// Avoided offset by 1 error -- start with the index
-						// below
 						int baseOptionsIndex = ip_header_size + 20;
 
 						for (int i = baseOptionsIndex; i < ip_packet_size; i++) {
@@ -942,11 +946,6 @@ public class AppRequestService extends VpnService implements Runnable {
 
 					Log.d("safeDroidTCP",
 							"TCP packet without checksum complete");
-
-					/*
-					 * For SYNACK packet TCP header size is 5 words of 32-bit
-					 * length and payload is 0
-					 */
 
 					long packetDataOffSet = (long) ((tempPacket[ip_header_size + 12] & 0xFF));
 					packetDataOffSet = packetDataOffSet >> 4;
@@ -975,6 +974,9 @@ public class AppRequestService extends VpnService implements Runnable {
 						out.write(ipPacket.array(), 0, ipPacket.array().length);
 						Log.d("safeDroidTCP", "SYNACK Write Successfull!!!!");
 
+						String dstPacket = convertToHex(ipPacket.array());
+						writeDump(dstPacket);
+
 					} catch (IOException e) {
 						Log.d("safeDroidTCP", "SYNACK IPv4 Packet NOT written!");
 						e.printStackTrace();
@@ -986,6 +988,7 @@ public class AppRequestService extends VpnService implements Runnable {
 					Log.d("safeDroidTCP", "FIN packet");
 
 					// FIN packet
+
 					try {
 						tcpTunnel.close();
 						Log.d("safeDroidTCP", "Socket close successful");
@@ -1013,6 +1016,10 @@ public class AppRequestService extends VpnService implements Runnable {
 						out.write(ipPacket.array(), 0, ipPacket.array().length);
 						Log.d("safeDroidTCP", "FINACK Write Successfull!!!!");
 
+						String dstPacket = convertToHex(ipPacket.array());
+
+						writeDump(dstPacket);
+
 					} catch (IOException e) {
 						Log.d("safeDroidTCP", "FINACK IPv4 Packet NOT written!");
 						e.printStackTrace();
@@ -1020,36 +1027,41 @@ public class AppRequestService extends VpnService implements Runnable {
 
 					socketMapTCP.remove(socketKey);
 					tcpConnectionState.remove(socketKey);
+
 					// remove the socket from the map
 				}
 
-				else if (ackFlag == 1 && (finFlag == 1 || synFlag == 1)) {
-					// Received SYNACK/FINACK -- send a simple ACK
-					Log.d("safeDroidTCP", "Received FINACK/SYNACK");
-
-				} else if (ackFlag == 1 && finFlag != 1 && synFlag != 1) {
-
-					Log.d("safeDroidTCP", "ACK PACKETS!!");
-					Log.d("safeDroidTCP", "Source Address: " + sourceAddress);
-					Log.d("safeDroidTCP", "Destination Address: " + dstAddress);
-					Log.d("safeDroidTCP", "ACK number: " + ackNumber);
-					Log.d("safeDroidTCP", "sequence number: " + sequenceNumber);
+				else if (ackFlag == 1 && finFlag != 1 && synFlag != 1) {
 
 					ByteBuffer responseBuffer = ByteBuffer.allocate(32767);
 
 					try {
+
 						int responseLength = tcpTunnel.read(responseBuffer);
 						Log.d("safeDroidTCPACK", "ACK response bytes read: "
 								+ responseLength);
+						int requestLength = 0;
+						Log.d("safeDroidPacketStatus", "ACK Read Only!");
+
 						if (responseLength > 0) {
+							Log.d("safeDroidPacketStatus",
+									"ACK got Read Response!");
+
+							// update tcpConnectionState
+
+							String sequenceAckUpdate = sequenceNumber + "\n"
+									+ ackNumber + "\n" + "1";
+							tcpConnectionState
+									.put(socketKey, sequenceAckUpdate);
 
 							responseBuffer.limit(responseLength);
 
 							// create a tcp packet
 							byte[] tcpPayloadPacket = createPayloadPacket(
-									tempPacket, responseBuffer.array(),
-									sourcePortVal, dstPortVal, ip_header_size,
-									sequenceNumber, ackNumber, responseLength,
+									requestLength, tempPacket,
+									responseBuffer.array(), sourcePortVal,
+									dstPortVal, ip_header_size, sequenceNumber,
+									ackNumber, responseLength,
 									tcpConnectionState, socketKey);
 							ByteBuffer ipPacket = null;
 							if (version == 4) {
@@ -1068,6 +1080,10 @@ public class AppRequestService extends VpnService implements Runnable {
 								Log.d("safeDroidTCPACK",
 										"ACKResponse Write Successfull!!!!");
 
+								String dstPacket = convertToHex(ipPacket
+										.array());
+								writeDump(dstPacket);
+
 							} catch (IOException e) {
 								Log.d("safeDroidTCPACK",
 										"ACKResponse IPv4 Packet NOT written!");
@@ -1083,16 +1099,15 @@ public class AppRequestService extends VpnService implements Runnable {
 
 				}
 
-				else if (ackFlag != 1 && finFlag != 1 && synFlag != 1) {
-					Log.d("safeDroidTCPACK", "EMPTY FLAGS!!");
-				}
-
 			}
 
 			else {
-				Log.d("safeDroidTCPPayload", "PAYLOAD PACKETS!!");
 
 				if (!sourceAddress.equals("192.168.2.73")) {
+
+					String srcPacket = convertToHex(tempPacket);
+					writeDump(srcPacket);
+
 					// TCP reset -- reset midstream connections
 					byte[] resetPacket = createResetPacket(tempPacket,
 							sourcePortVal, dstPortVal, sequenceNumber,
@@ -1106,12 +1121,12 @@ public class AppRequestService extends VpnService implements Runnable {
 						ipPacket = createIPv6Packet(resetPacket, tempPacket);
 					}
 
-					String srcPacket = convertToHex(tempPacket);
-					String dstPacket = convertToHex(resetPacket);
-
 					try {
 						out.write(ipPacket.array(), 0, ipPacket.array().length);
-						Log.d("safeDroidTCPRST", "RSTACK Write Successfull!!!!");
+
+						String dstPacket = convertToHex(ipPacket.array());
+
+						writeDump(dstPacket);
 
 					} catch (IOException e1) {
 						// TODO Auto-generated catch block
@@ -1121,6 +1136,7 @@ public class AppRequestService extends VpnService implements Runnable {
 					try {
 						tcpTunnel.close();
 						socketMapTCP.remove(socketKey);
+						tcpConnectionState.remove(socketKey);
 					} catch (IOException e) {
 						// TODO Auto-generated catch block
 						e.printStackTrace();
@@ -1138,7 +1154,7 @@ public class AppRequestService extends VpnService implements Runnable {
 							+ tempPacket.length);
 
 					int tcpPayloadLength = (int) (tempPacket.length
-							- (dataOffSet * 4) - ip_header_size);
+							- ((dataOffSet * 4) + ip_header_size));
 
 					ByteBuffer tcpRequestPayload = ByteBuffer
 							.allocate(tcpPayloadLength);
@@ -1160,8 +1176,10 @@ public class AppRequestService extends VpnService implements Runnable {
 							"packet header length length: "
 									+ (ip_header_size + (dataOffSet * 4)));
 
+					
 					for (int j = tcpPayloadBaseIndex; j < tempPacket.length; j++) {
 						tcpRequestPayload.put((byte) (tempPacket[j] & 0xFF));
+						
 					}
 
 					Log.d("safeDroidTCPPayload", "payload length computed: "
@@ -1179,29 +1197,37 @@ public class AppRequestService extends VpnService implements Runnable {
 					ByteBuffer dummyRequest = ByteBuffer
 							.allocate(tempPacket.length);
 
-					// add packet headers to dummy request
-					for (int i = 0; i < tcpPayloadBaseIndex; i++) {
-						dummyRequest.put(tempPacket[i]);
-					}
+					if (tcpTunnel.isConnected()) {
 
-					dummyRequest.put(tcpRequestPayload.array());
-
-					// check again if out of order
-					if ((prevAckNumber >= sequenceNumber)
-							&& prevSequenceNumber == ackNumber) {
-						outOfOrderFlag = true;
-						Log.d("safeDroidTCP", "out of order");
-					}
-
-					if (tcpTunnel.isConnected() && outOfOrderFlag == false) {
-
+						String writeCheck = tcpConnectionState.get(socketKey);
+						String writeCheckElements[] = writeCheck.split("\n");
+						responseStatus = Integer
+								.parseInt(writeCheckElements[2]);
+						
+						int writeVal = 0;
+						
 						try {
 							tcpRequestPayload.order(ByteOrder.BIG_ENDIAN);
+							if (responseStatus == 2) {
+								String srcPacket = convertToHex(tempPacket);
+								writeDump(srcPacket);
 
-							int writeVal = tcpTunnel.write(tcpRequestPayload);
+								writeVal = tcpTunnel
+										.write(tcpRequestPayload);
+
+								String sequenceAckUpdate = sequenceNumber
+										+ "\n" + ackNumber + "\n" + "0";
+
+								tcpConnectionState.put(socketKey,
+										sequenceAckUpdate);
+
+								Log.d("safeDroidPacketStatus", "Read & Write!");
+							}
+
 							Log.d("safeDroidTCPPayload",
 									"payload bytes written: "
 											+ tcpPayloadLength);
+
 						} catch (IOException e) {
 							// TODO Auto-generated catch block
 							e.printStackTrace();
@@ -1214,21 +1240,30 @@ public class AppRequestService extends VpnService implements Runnable {
 						try {
 
 							responseLength = tcpTunnel.read(tcpResponse);
-							
+
 							Log.d("safeDroidTCPPayload", "payload bytes read: "
 									+ responseLength);
 
 							if (responseLength > 0) {
+								Log.d("safeDroidPacketStatus",
+										"Payload got Read Response!");
+
+								String sequenceAckUpdate = sequenceNumber
+										+ "\n" + ackNumber + "\n" + "1";
+
+								tcpConnectionState.put(socketKey,
+										sequenceAckUpdate);
 
 								tcpResponse.limit(responseLength);
 
 								// create a tcp packet
 								byte[] tcpPayloadPacket = createPayloadPacket(
-										tempPacket, tcpResponse.array(),
-										sourcePortVal, dstPortVal,
-										ip_header_size, sequenceNumber,
-										ackNumber, responseLength,
-										tcpConnectionState, socketKey);
+										tcpPayloadLength, tempPacket,
+										tcpResponse.array(), sourcePortVal,
+										dstPortVal, ip_header_size,
+										sequenceNumber, ackNumber,
+										responseLength, tcpConnectionState,
+										socketKey);
 
 								ByteBuffer ipPacket = null;
 
@@ -1239,14 +1274,13 @@ public class AppRequestService extends VpnService implements Runnable {
 
 								}
 								dummyRequest.order(ByteOrder.BIG_ENDIAN);
-								String srcPacket = convertToHex(dummyRequest
-										.array());
+
 								ipPacket.order(ByteOrder.BIG_ENDIAN);
+
 								String dstPacket = convertToHex(ipPacket
 										.array());
 								int protocol = (tempPacket[9] & 0xFF);
 
-								writeDump(srcPacket);
 								writeDump(dstPacket);
 
 								Log.d("safeDroidTCPPayload",
@@ -1256,6 +1290,7 @@ public class AppRequestService extends VpnService implements Runnable {
 
 									out.write(ipPacket.array(), 0,
 											ipPacket.array().length);
+
 									Log.d("safeDroidTCPPayload",
 											"Payload Write Successfull!!!!");
 
@@ -1263,15 +1298,6 @@ public class AppRequestService extends VpnService implements Runnable {
 									Log.d("safeDroidTCPPayload",
 											"Payload IPv4 Packet NOT written!");
 									e.printStackTrace();
-								}
-							} else {
-								// Log requests that got no responses -- and
-								// why?!
-								if (dstPortVal == 443) {
-									dummyRequest.order(ByteOrder.BIG_ENDIAN);
-									String srcPacket = convertToHex(dummyRequest
-											.array());
-									writeDump(srcPacket);
 								}
 							}
 
@@ -1281,15 +1307,12 @@ public class AppRequestService extends VpnService implements Runnable {
 						}
 
 					} else {
-						Log.d("safeDroidTCP", "not connected/out of order");
+						Log.d("safeDroidTCP", "not connected");
 					}
 				}
-
 			}
-		} else {
-			Log.d("safeDroidTCP",
-					"Dropped packet because duplicate/out of order");
 		}
+		Log.d("safeDroidPacketStatus", "Dropped!");
 
 	}
 
@@ -1433,6 +1456,9 @@ public class AppRequestService extends VpnService implements Runnable {
 			int ip_header_size) {
 		DatagramChannel udpChannel = null;
 
+		String srcPacket = convertToHex(tempPacket);
+		writeDump(srcPacket);
+
 		InetSocketAddress dest = new InetSocketAddress(dstAddress,
 				(int) dstPortVal);
 		if (!socketMapUDP.containsKey(socketKey)) {
@@ -1539,12 +1565,11 @@ public class AppRequestService extends VpnService implements Runnable {
 			}
 			responsePayload.clear();
 			responsePayload.order(ByteOrder.BIG_ENDIAN);
+
 			int responseLength = udpChannel.read(responsePayload);
 
 			Log.d("safeDroidUDP", "Bytes read from channel: " + responseLength);
 
-			String srcPacket = convertToHex(tempPacket);
-			writeDump(srcPacket);
 			if (responseLength > 0) {
 				Log.d("safeDroidUDP", "GOT UDP RESPONSE!!!!");
 				Log.d("safeDroidUDP", Arrays.toString(responsePayload.array()));
@@ -1979,6 +2004,7 @@ public class AppRequestService extends VpnService implements Runnable {
 				Log.d("safeDroidInput", "packets: " + packetListSize);
 				for (ByteBuffer packet : packetList) {
 					try {
+
 						resolvePacket(packet, socketMapUDP, socketMapTCP,
 								tcpConnectionState, out);
 					} catch (IOException e) {
