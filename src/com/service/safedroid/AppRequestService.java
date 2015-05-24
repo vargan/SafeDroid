@@ -95,7 +95,7 @@ public class AppRequestService extends VpnService implements Runnable {
 			File dir = new File(sdCard.getAbsolutePath()
 					+ "/SafeDroid/PacketDump");
 
-			File file = new File(dir, "safeDroidSessionDump52.txt");
+			File file = new File(dir, "safeDroidSessionDump58.txt");
 
 			FileWriter fw;
 
@@ -110,7 +110,7 @@ public class AppRequestService extends VpnService implements Runnable {
 				fw.close();
 
 			} catch (IOException e) {
-				// TODO Auto-generated catch block
+
 				e.printStackTrace();
 			}
 
@@ -348,7 +348,7 @@ public class AppRequestService extends VpnService implements Runnable {
 	}
 
 	public byte[] createResetPacket(byte[] tempPacket, long sourcePortVal,
-			long dstPortVal, long sequenceNumber, long ackNumber,
+			long dstPortVal, int sequenceNumber, int ackNumber,
 			int ip_header_size) {
 
 		ByteArrayOutputStream tcpRSTACK = new ByteArrayOutputStream();
@@ -422,7 +422,7 @@ public class AppRequestService extends VpnService implements Runnable {
 			return tcpPacket;
 
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
+
 			e.printStackTrace();
 		}
 
@@ -430,8 +430,8 @@ public class AppRequestService extends VpnService implements Runnable {
 	}
 
 	public byte[] createFINACKpacket(byte[] tempPacket, long sourcePortVal,
-			long dstPortVal, int ip_header_size, long sequenceNumber,
-			long ackNumber) {
+			long dstPortVal, int ip_header_size, int sequenceNumber,
+			int ackNumber) {
 
 		ByteArrayOutputStream tcpFINACK = new ByteArrayOutputStream();
 		DataOutputStream dataTcpFINACK = new DataOutputStream(tcpFINACK);
@@ -454,7 +454,6 @@ public class AppRequestService extends VpnService implements Runnable {
 			int responseSequenceNumber = (int) (ackNumber);
 			int responseAckNumber = (int) (sequenceNumber + 1);
 
-			// TODO: verify!!!
 			dataTcpFINACK.writeInt((int) ((int) responseSequenceNumber));
 
 			dataTcpFINACK
@@ -516,7 +515,7 @@ public class AppRequestService extends VpnService implements Runnable {
 			}
 
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
+
 			e.printStackTrace();
 		}
 
@@ -539,7 +538,7 @@ public class AppRequestService extends VpnService implements Runnable {
 
 	public byte[] createPayloadPacket(int requestLength, byte[] tempPacket,
 			byte[] response, long sourcePortVal, long dstPortVal,
-			int ip_header_size, long sequenceNumber, long ackNumber,
+			int ip_header_size, int sequenceNumber, int ackNumber,
 			int responseLength,
 			ConcurrentHashMap<String, String> tcpConnectionState,
 			String socketKey) {
@@ -569,25 +568,27 @@ public class AppRequestService extends VpnService implements Runnable {
 			// fix the sequence and ack numbers
 			int responseSequenceNumber = (int) (ackNumber);
 
-			long responseAckNumber = (sequenceNumber  + requestPayloadLength);
+			int responseAckNumber = (sequenceNumber + requestPayloadLength);
+
+			responseSequenceNumber = responseSequenceNumber & 0xFFFFFFFF;
+			responseAckNumber = responseAckNumber & 0xFFFFFFFF;
 			
 			Log.d("seqAck", "Socket Key: " + socketKey);
 			Log.d("seqAck", "Request Seq: " + sequenceNumber);
 			Log.d("seqAck", "Request Ack: " + ackNumber);
-			
+
 			Log.d("seqAck", "Request IP Length: " + ipSegmentLength);
 			Log.d("seqAck", "Request IP Header: " + ip_header_size);
-			Log.d("seqAck", "Request TCP Header: " + (dataOffset*4));
-			Log.d("seqAck", "Request Payload Length: "+ requestPayloadLength);
-			
+			Log.d("seqAck", "Request TCP Header: " + (dataOffset * 4));
+			Log.d("seqAck", "Request Payload Length: " + requestPayloadLength);
+			Log.d("seqAck", "Response Payload Length: " + responseLength);
+
 			Log.d("seqAck", "Response Seq: " + responseSequenceNumber);
 			Log.d("seqAck", "Response Ack: " + responseAckNumber);
-			
 
 			dataTcpResponse.writeInt((int) responseSequenceNumber);
 
 			dataTcpResponse.writeInt((int) responseAckNumber);
-			
 
 			// dataoffset
 			dataTcpResponse.writeByte(tempPacket[ip_header_size + 12] & 0xFF);
@@ -652,7 +653,7 @@ public class AppRequestService extends VpnService implements Runnable {
 			return tcpPacket;
 
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
+
 			e.printStackTrace();
 		}
 
@@ -734,11 +735,11 @@ public class AppRequestService extends VpnService implements Runnable {
 		boolean dropPacket = false;
 
 		SocketChannel tcpTunnel = null;
-		long prevSequenceNumber = 0;
-		long prevAckNumber = 0;
-		long responseStatus = 0;
-		long sequenceNumber = 0;
-		long ackNumber = 0;
+		int prevSequenceNumber = 0;
+		int prevAckNumber = 0;
+		int responseStatus = 0;
+		int sequenceNumber = 0;
+		int ackNumber = 0;
 
 		sequenceNumber += BigInteger.valueOf(
 				tempPacket[ip_header_size + 4] & 0xFF).longValue();
@@ -779,14 +780,9 @@ public class AppRequestService extends VpnService implements Runnable {
 
 			String[] sequenceAckElements = sequenceACK.split("\n");
 
-			prevSequenceNumber = Long.parseLong(sequenceAckElements[0]);
-			prevAckNumber = Long.parseLong(sequenceAckElements[1]);
-			responseStatus = Long.parseLong(sequenceAckElements[2]);
-
-			Log.d("safeDroidOrder", "oldSeq: " + prevSequenceNumber);
-			Log.d("safeDroidOrder", "newSeq: " + sequenceNumber);
-			Log.d("safeDroidOrder", "oldAck: " + prevAckNumber);
-			Log.d("safeDroidOrder", "newAck: " + ackNumber);
+			prevSequenceNumber = Integer.parseInt(sequenceAckElements[0]);
+			prevAckNumber = Integer.parseInt(sequenceAckElements[1]);
+			responseStatus = Integer.parseInt(sequenceAckElements[2]);
 
 			if ((prevSequenceNumber == sequenceNumber)) {
 				if (responseStatus == 1) {
@@ -876,8 +872,8 @@ public class AppRequestService extends VpnService implements Runnable {
 
 					tcpConnectionState.put(socketKey, sequenceAckUpdate);
 
-					long responseSequenceNumber = 0;
-					long responseAckNumber = sequenceNumber + 1;
+					int responseSequenceNumber = 0;
+					int responseAckNumber = sequenceNumber + 1;
 
 					Log.d("safeDroidTCP", "SYN packet");
 
@@ -1104,6 +1100,7 @@ public class AppRequestService extends VpnService implements Runnable {
 								String dstPacket = convertToHex(ipPacket
 										.array());
 								writeDump(dstPacket);
+								Log.d("safeDroidResponseType", "ACK");
 
 							} catch (IOException e) {
 								Log.d("safeDroidTCPACK",
@@ -1114,7 +1111,7 @@ public class AppRequestService extends VpnService implements Runnable {
 						}
 
 					} catch (IOException e) {
-						// TODO Auto-generated catch block
+
 						e.printStackTrace();
 					}
 
@@ -1150,7 +1147,7 @@ public class AppRequestService extends VpnService implements Runnable {
 						writeDump(dstPacket);
 
 					} catch (IOException e1) {
-						// TODO Auto-generated catch block
+
 						e1.printStackTrace();
 					}
 
@@ -1159,7 +1156,7 @@ public class AppRequestService extends VpnService implements Runnable {
 						socketMapTCP.remove(socketKey);
 						tcpConnectionState.remove(socketKey);
 					} catch (IOException e) {
-						// TODO Auto-generated catch block
+
 						e.printStackTrace();
 					}
 
@@ -1218,7 +1215,7 @@ public class AppRequestService extends VpnService implements Runnable {
 											+ tcpPayloadLength);
 
 						} catch (IOException e) {
-							// TODO Auto-generated catch block
+
 							e.printStackTrace();
 						}
 
@@ -1269,7 +1266,8 @@ public class AppRequestService extends VpnService implements Runnable {
 										.array());
 
 								writeDump(dstPacket);
-
+								Log.d("safeDroidResponseType", "Payload Request");
+								
 								Log.d("safeDroidTCPPayload",
 										"local file write successful!");
 
@@ -1289,7 +1287,7 @@ public class AppRequestService extends VpnService implements Runnable {
 							}
 
 						} catch (IOException e) {
-							// TODO Auto-generated catch block
+
 							e.printStackTrace();
 						}
 
@@ -1472,7 +1470,7 @@ public class AppRequestService extends VpnService implements Runnable {
 					Log.d("safeDroidUDP", "Connection Successful");
 				}
 			} catch (IOException e) {
-				// TODO Auto-generated catch block
+
 				e.printStackTrace();
 			}
 
@@ -1506,7 +1504,7 @@ public class AppRequestService extends VpnService implements Runnable {
 					}
 
 				} catch (IOException e) {
-					// TODO Auto-generated catch block
+
 					e.printStackTrace();
 				}
 
@@ -1524,7 +1522,6 @@ public class AppRequestService extends VpnService implements Runnable {
 
 		int basePayloadIndex = ip_header_size + 8;
 		int payloadCtr = 0;
-		int length = 0;
 
 		Log.d("safeDroidUDP", Arrays.toString(tempPacket));
 		Log.d("safeDroidUDP", "Payload Length: " + payloadLength);
@@ -1954,8 +1951,7 @@ public class AppRequestService extends VpnService implements Runnable {
 				bytesRead = in.read(packetBuffer.array(), residueLength,
 						packetBufferSize - residueLength);
 			} catch (IOException e) {
-				// TODO: Is this enough? Do we need to try and restart the TUN
-				// interface? Warn user?
+
 				Log.d("safeDroid", "IO Exception socket");
 				e.printStackTrace();
 				return;
@@ -1995,10 +1991,7 @@ public class AppRequestService extends VpnService implements Runnable {
 						resolvePacket(packet, socketMapUDP, socketMapTCP,
 								tcpConnectionState, out);
 					} catch (IOException e) {
-						// TODO:
-						// createResetPacket(tempPacket, sourcePortVal,
-						// dstPortVal, sequenceNumber, ackNumber,
-						// ip_header_size);
+
 					}
 				}
 			}
