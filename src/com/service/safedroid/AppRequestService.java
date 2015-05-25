@@ -95,7 +95,7 @@ public class AppRequestService extends VpnService implements Runnable {
 			File dir = new File(sdCard.getAbsolutePath()
 					+ "/SafeDroid/PacketDump");
 
-			File file = new File(dir, "safeDroidSessionDump58.txt");
+			File file = new File(dir, "safeDroidSessionDump60.txt");
 
 			FileWriter fw;
 
@@ -365,7 +365,7 @@ public class AppRequestService extends VpnService implements Runnable {
 			int responseSequenceNumber = (int) (ackNumber);
 			int responseAckNumber = (int) (sequenceNumber + 1);
 
-			dataTcpRSTACK.writeInt((int) (responseSequenceNumber));
+			dataTcpRSTACK.writeInt((responseSequenceNumber) & 0xFFFFFFFF);
 
 			dataTcpRSTACK
 					.writeInt((int) ((int) (responseAckNumber) & 0xFFFFFFFF));
@@ -451,10 +451,10 @@ public class AppRequestService extends VpnService implements Runnable {
 			 * and ack on the basis of payload/response & sequence number
 			 */
 
-			int responseSequenceNumber = (int) (ackNumber);
-			int responseAckNumber = (int) (sequenceNumber + 1);
+			int responseSequenceNumber = (ackNumber);
+			int responseAckNumber = (sequenceNumber + 1);
 
-			dataTcpFINACK.writeInt((int) ((int) responseSequenceNumber));
+			dataTcpFINACK.writeInt((int) (responseSequenceNumber) & 0xFFFFFFFF);
 
 			dataTcpFINACK
 					.writeInt((int) ((int) (responseAckNumber) & 0xFFFFFFFF));
@@ -572,7 +572,7 @@ public class AppRequestService extends VpnService implements Runnable {
 
 			responseSequenceNumber = responseSequenceNumber & 0xFFFFFFFF;
 			responseAckNumber = responseAckNumber & 0xFFFFFFFF;
-			
+
 			Log.d("seqAck", "Socket Key: " + socketKey);
 			Log.d("seqAck", "Request Seq: " + sequenceNumber);
 			Log.d("seqAck", "Request Ack: " + ackNumber);
@@ -586,9 +586,9 @@ public class AppRequestService extends VpnService implements Runnable {
 			Log.d("seqAck", "Response Seq: " + responseSequenceNumber);
 			Log.d("seqAck", "Response Ack: " + responseAckNumber);
 
-			dataTcpResponse.writeInt((int) responseSequenceNumber);
+			dataTcpResponse.writeInt(responseSequenceNumber & 0xFFFFFFFF);
 
-			dataTcpResponse.writeInt((int) responseAckNumber);
+			dataTcpResponse.writeInt(responseAckNumber & 0xFFFFFFFF);
 
 			// dataoffset
 			dataTcpResponse.writeByte(tempPacket[ip_header_size + 12] & 0xFF);
@@ -892,14 +892,8 @@ public class AppRequestService extends VpnService implements Runnable {
 						dataTcpSYNACK
 								.writeShort((short) (sourcePortVal & 0xFFFF));
 
-						/*
-						 * Add a sequence number = sequence number of the SYN
-						 * packet i.e. logical value = 0 and the same for ack
-						 * number + 1
-						 */
-
 						dataTcpSYNACK
-								.writeInt((int) ((int) responseSequenceNumber));
+								.writeInt((int) ((int) responseSequenceNumber) & 0xFFFFFFFF);
 
 						dataTcpSYNACK
 								.writeInt((int) ((int) (responseAckNumber) & 0xFFFFFFFF));
@@ -1266,8 +1260,9 @@ public class AppRequestService extends VpnService implements Runnable {
 										.array());
 
 								writeDump(dstPacket);
-								Log.d("safeDroidResponseType", "Payload Request");
-								
+								Log.d("safeDroidResponseType",
+										"Payload Request");
+
 								Log.d("safeDroidTCPPayload",
 										"local file write successful!");
 
@@ -1483,7 +1478,7 @@ public class AppRequestService extends VpnService implements Runnable {
 			if (udpChannel == null) {
 				try {
 					udpChannel = DatagramChannel.open();
-					udpChannel.configureBlocking(false);
+					udpChannel.configureBlocking(true);
 
 				} catch (IOException e) {
 					Log.d("safeDroidUDP", "Failed to open UDP socket");
