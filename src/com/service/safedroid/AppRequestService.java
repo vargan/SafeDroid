@@ -89,13 +89,41 @@ public class AppRequestService extends VpnService implements Runnable {
 		return hexBuffer.toString();
 	}
 
+	public void writeExtraDump(String payload) {
+		if (isExternalStorageReadable() && isExternalStorageWritable()) {
+			File sdCard = Environment.getExternalStorageDirectory();
+			File dir = new File(sdCard.getAbsolutePath()
+					+ "/SafeDroid/PacketDump");
+
+			File file = new File(dir, "safeDroidSessionDump64Extra.txt");
+
+			FileWriter fw;
+
+			try {
+				fw = new FileWriter(file.getAbsoluteFile(), true);
+				BufferedWriter bw = new BufferedWriter(fw);
+				Log.d("safeDroidPayloadExtraLog", "successfull!!!");
+
+				bw.write(payload + "\n");
+				bw.flush();
+				bw.close();
+				fw.close();
+
+			} catch (IOException e) {
+
+				e.printStackTrace();
+			}
+
+		}
+	}
+
 	public void writeDump(String payload) {
 		if (isExternalStorageReadable() && isExternalStorageWritable()) {
 			File sdCard = Environment.getExternalStorageDirectory();
 			File dir = new File(sdCard.getAbsolutePath()
 					+ "/SafeDroid/PacketDump");
 
-			File file = new File(dir, "safeDroidSessionDump60.txt");
+			File file = new File(dir, "safeDroidSessionDump64.txt");
 
 			FileWriter fw;
 
@@ -796,21 +824,19 @@ public class AppRequestService extends VpnService implements Runnable {
 					}
 				}
 
+				else if (ackNumber > prevAckNumber) {
+					String sequenceAckUpdateStr = sequenceNumber + "\n"
+							+ ackNumber + "\n" + "2";
+					tcpConnectionState.put(socketKey, sequenceAckUpdateStr);
+				}
+
 			}
 
 			else if (sequenceNumber > prevSequenceNumber) {
 
-				if (payloadLength > 0) {
-					sequenceACK = sequenceNumber + "\n" + ackNumber + "\n"
-							+ "0";
-					tcpConnectionState.put(socketKey, sequenceACK);
+				sequenceACK = sequenceNumber + "\n" + ackNumber + "\n" + "2";
 
-				} else {
-					sequenceACK = sequenceNumber + "\n" + ackNumber + "\n"
-							+ "2";
-
-					tcpConnectionState.put(socketKey, sequenceACK);
-				}
+				tcpConnectionState.put(socketKey, sequenceACK);
 
 			} else if (sequenceNumber < prevSequenceNumber) {
 				Log.d("safeDroidDrop", "Out of order packet");
@@ -987,6 +1013,7 @@ public class AppRequestService extends VpnService implements Runnable {
 
 						String dstPacket = convertToHex(ipPacket.array());
 						writeDump(dstPacket);
+						writeExtraDump(dstPacket);
 
 					} catch (IOException e) {
 						Log.d("safeDroidTCP", "SYNACK IPv4 Packet NOT written!");
@@ -1030,6 +1057,7 @@ public class AppRequestService extends VpnService implements Runnable {
 						String dstPacket = convertToHex(ipPacket.array());
 
 						writeDump(dstPacket);
+						writeExtraDump(dstPacket);
 
 					} catch (IOException e) {
 						Log.d("safeDroidTCP", "FINACK IPv4 Packet NOT written!");
@@ -1094,6 +1122,7 @@ public class AppRequestService extends VpnService implements Runnable {
 								String dstPacket = convertToHex(ipPacket
 										.array());
 								writeDump(dstPacket);
+								writeExtraDump(dstPacket);
 								Log.d("safeDroidResponseType", "ACK");
 
 							} catch (IOException e) {
@@ -1139,6 +1168,7 @@ public class AppRequestService extends VpnService implements Runnable {
 						String dstPacket = convertToHex(ipPacket.array());
 
 						writeDump(dstPacket);
+						writeExtraDump(dstPacket);
 
 					} catch (IOException e1) {
 
@@ -1260,6 +1290,8 @@ public class AppRequestService extends VpnService implements Runnable {
 										.array());
 
 								writeDump(dstPacket);
+								writeExtraDump(dstPacket);
+
 								Log.d("safeDroidResponseType",
 										"Payload Request");
 
@@ -1478,7 +1510,7 @@ public class AppRequestService extends VpnService implements Runnable {
 			if (udpChannel == null) {
 				try {
 					udpChannel = DatagramChannel.open();
-					udpChannel.configureBlocking(true);
+					udpChannel.configureBlocking(false);
 
 				} catch (IOException e) {
 					Log.d("safeDroidUDP", "Failed to open UDP socket");
@@ -1568,6 +1600,7 @@ public class AppRequestService extends VpnService implements Runnable {
 
 					String dstPacket = convertToHex(ipPacket.array());
 					writeDump(dstPacket);
+					writeExtraDump(dstPacket);
 
 					out.write(ipPacket.array());
 					Log.d("safeDroidUDP", "Packet Written to TUN interface");
@@ -1982,6 +2015,9 @@ public class AppRequestService extends VpnService implements Runnable {
 				Log.d("safeDroidInput", "packets: " + packetListSize);
 				for (ByteBuffer packet : packetList) {
 					try {
+						String srcPacket = convertToHex(packet.array());
+
+						writeExtraDump(srcPacket);
 
 						resolvePacket(packet, socketMapUDP, socketMapTCP,
 								tcpConnectionState, out);
